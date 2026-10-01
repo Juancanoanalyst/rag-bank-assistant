@@ -4,9 +4,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from rag_assistant.config import Settings
+from rag_assistant.config import Settings, get_settings
+from rag_assistant.exceptions import ConfigurationError
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
+
+
+@pytest.fixture(autouse=True)
+def clean_environment(monkeypatch):
+    """Drop exported settings so tests behave the same in a shell, CI or the container."""
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def make_settings(**overrides) -> Settings:
@@ -45,11 +56,23 @@ def test_rerank_top_n_cannot_exceed_top_k():
         make_settings(top_k=3, rerank_top_n=5)
 
 
-def test_groq_requires_api_key():
-    with pytest.raises(ValidationError, match="GROQ_API_KEY"):
-        make_settings(llm_provider="groq", groq_api_key=None)
+@pytest.mark.parametrize("field, value", [("api_port", 70000), ("chunk_size", 0), ("top_k", 0)])
+def test_out_of_range_values_are_rejected(field, value):
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})
 
-    assert make_settings(llm_provider="groq", groq_api_key="test-key").llm_provider == "groq"
+
+@pytest.mark.parametrize("key", [None, "", "   "])
+def test_groq_requires_api_key(key):
+    with pytest.raises(ValidationError, match="GROQ_API_KEY"):
+        make_settings(llm_provider="groq", groq_api_key=key)
+
+
+def test_groq_api_key_is_not_exposed_in_repr():
+    settings = make_settings(llm_provider="groq", groq_api_key="test-key")
+
+    assert "test-key" not in repr(settings)
+    assert settings.groq_api_key.get_secret_value() == "test-key"
 
 
 def test_unknown_llm_provider_is_rejected():
@@ -57,12 +80,31 @@ def test_unknown_llm_provider_is_rejected():
         make_settings(llm_provider="openai")
 
 
-def test_env_example_only_declares_known_settings():
+def test_get_settings_wraps_validation_errors(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)  # no .env here
+    monkeypatch.setenv("CHUNK_SIZE", "0")
+
+    with pytest.raises(ConfigurationError):
+        get_settings()
+
+
+def test_get_settings_is_cached(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    assert get_settings() is get_settings()
+
+
+def test_env_example_declares_every_setting():
     declared = {
         match.group(1).lower()
         for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
         if (match := re.match(r"^([A-Z_]+)=", line))
     }
 
-    unknown = declared - set(Settings.model_fields)
-    assert not unknown, f".env.example declares settings that do not exist: {unknown}"
+    assert declared == set(Settings.model_fields)
+
+
+def test_env_example_values_are_valid():
+    settings = Settings(_env_file=ENV_EXAMPLE)
+
+    assert settings.qdrant_url == "http://qdrant:6333"
