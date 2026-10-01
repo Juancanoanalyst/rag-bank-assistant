@@ -8,8 +8,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from rag_assistant.exceptions import ConfigurationError
 
 
 class Settings(BaseSettings):
@@ -40,7 +42,9 @@ class Settings(BaseSettings):
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
 
     # --- Vector store ---
-    qdrant_url: str = "http://qdrant:6333"
+    # Service URLs default to localhost for runs outside Docker; .env.example
+    # points them at the compose service names.
+    qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "bank_site"
 
     # --- Retrieval ---
@@ -49,9 +53,9 @@ class Settings(BaseSettings):
 
     # --- LLM ---
     llm_provider: Literal["ollama", "groq"] = "ollama"
-    ollama_base_url: str = "http://ollama:11434"
+    ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
-    groq_api_key: str | None = None
+    groq_api_key: SecretStr | None = None
     groq_model: str = "llama-3.1-8b-instant"
     llm_temperature: float = Field(default=0.1, ge=0, le=2)
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
@@ -66,7 +70,7 @@ class Settings(BaseSettings):
     # --- API / UI ---
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8000, gt=0, lt=65536)
-    api_url: str = "http://api:8000"
+    api_url: str = "http://localhost:8000"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @model_validator(mode="after")
@@ -75,12 +79,20 @@ class Settings(BaseSettings):
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         if self.rerank_top_n > self.top_k:
             raise ValueError("RERANK_TOP_N cannot be greater than TOP_K")
-        if self.llm_provider == "groq" and not self.groq_api_key:
+        groq_key = self.groq_api_key.get_secret_value() if self.groq_api_key else ""
+        if self.llm_provider == "groq" and not groq_key.strip():
             raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER=groq")
         return self
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return the process-wide Settings instance."""
-    return Settings()
+    """Return the process-wide Settings instance.
+
+    Relative paths (.env, data dirs) resolve against the working directory, so
+    entrypoints are expected to run from the repository root (or /app in Docker).
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(f"Invalid configuration: {exc}") from exc
