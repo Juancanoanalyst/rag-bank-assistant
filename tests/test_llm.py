@@ -1,9 +1,9 @@
 import json
 
 import pytest
-from pydantic import SecretStr
 import requests
 import responses
+from pydantic import SecretStr
 
 from rag_assistant import factory
 from rag_assistant.exceptions import ConfigurationError, LLMError
