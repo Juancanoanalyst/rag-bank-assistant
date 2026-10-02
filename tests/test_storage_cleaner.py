@@ -7,7 +7,7 @@ from rag_assistant.exceptions import ScrapingError
 from rag_assistant.models import Document, RawPage
 from rag_assistant.scraping.cleaner import HtmlCleaner
 from rag_assistant.scraping.storage import CleanStore, RawStore, infer_url
-from rag_assistant.scraping.urls import section_from_url, spread_by_section
+from rag_assistant.scraping.urls import sample_evenly, section_from_url
 
 SITE = "https://www.banco-ejemplo.com.co"
 AHORROS_URL = f"{SITE}/personas/productos/cuentas/ahorros.html"
@@ -193,29 +193,24 @@ def test_clean_removes_cookie_banner_and_empty_list_markers():
     assert all(line.strip() not in ("", "-") for line in document.text.splitlines())
 
 
-def test_spread_by_section_takes_turns_between_sections():
-    urls = [
-        f"{SITE}/personas/productos/a.html",
-        f"{SITE}/personas/productos/b.html",
-        f"{SITE}/personas/productos/c.html",
-        f"{SITE}/personas/blog/x.html",
-        f"{SITE}/empresas/productos/y.html",
-    ]
+def test_sample_evenly_covers_sections_in_proportion_to_their_size():
+    productos = [f"{SITE}/personas/productos/{number}.html" for number in range(60)]
+    blog = [f"{SITE}/personas/blog/{number}.html" for number in range(30)]
+    empresas = [f"{SITE}/empresas/productos/{number}.html" for number in range(10)]
 
-    selected = spread_by_section(urls, limit=4)
+    selected = sample_evenly(productos + blog + empresas, limit=10)
 
-    assert selected == [
-        f"{SITE}/personas/productos/a.html",
-        f"{SITE}/personas/blog/x.html",
-        f"{SITE}/empresas/productos/y.html",
-        f"{SITE}/personas/productos/b.html",
-    ]
+    sections = [section_from_url(url) for url in selected]
+    assert sections.count("personas/productos") == 6
+    assert sections.count("personas/blog") == 3
+    assert sections.count("empresas/productos") == 1
+    assert len(set(selected)) == 10
 
 
-def test_spread_by_section_returns_everything_when_under_limit():
+def test_sample_evenly_returns_everything_when_under_limit():
     urls = [f"{SITE}/personas/blog/x.html", f"{SITE}/personas/blog/y.html"]
 
-    assert spread_by_section(urls, limit=10) == urls
+    assert sample_evenly(urls, limit=10) == urls
 
 
 def test_raw_store_urls_lists_only_files_still_on_disk(tmp_path):
@@ -226,3 +221,55 @@ def test_raw_store_urls_lists_only_files_still_on_disk(tmp_path):
 
     assert kept.exists()
     assert store.urls() == {AHORROS_URL}
+
+
+def test_clean_keeps_page_whose_body_class_mentions_cookies(read_fixture):
+    html = read_fixture("html/con-canonical.html").replace(
+        "<body>", '<body class="cookie-consent-open">'
+    )
+    page = RawPage(url=AHORROS_URL, html=html, filename="con-canonical.html")
+
+    document = HtmlCleaner(min_text_chars=200).clean(page)
+
+    assert "plazo máximo del crédito hipotecario" in document.text
+
+
+def test_infer_url_ignores_data_attributes():
+    html = '<link rel="canonical" data-href="https://evil.example/" href="https://a.co/real.html">'
+
+    assert infer_url(html) == "https://a.co/real.html"
+
+
+def test_raw_store_decodes_legacy_windows_1252_pages(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "antigua.html").write_bytes("<html>crédito año</html>".encode("cp1252"))
+
+    page = next(RawStore(raw_dir).pages())
+
+    assert "crédito año" in page.html
+
+
+def test_clean_store_failed_write_keeps_previous_file(tmp_path):
+    store = CleanStore(tmp_path / "clean")
+    previous = Document(url=AHORROS_URL, title="Ahorros", section="personas", text="texto")
+    store.write([previous])
+
+    def failing_documents():
+        yield previous
+        raise RuntimeError("fallo a mitad de la limpieza")
+
+    with pytest.raises(RuntimeError):
+        store.write(failing_documents())
+
+    assert store.read() == [previous]
+
+
+def test_clean_store_read_skips_corrupt_lines(tmp_path):
+    store = CleanStore(tmp_path / "clean")
+    document = Document(url=AHORROS_URL, title="Ahorros", section="personas", text="texto")
+    store.write([document])
+    with store.path.open("a", encoding="utf-8") as output:
+        output.write('{"url": "https://cortado')
+
+    assert store.read() == [document]

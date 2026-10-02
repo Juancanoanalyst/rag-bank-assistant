@@ -11,11 +11,13 @@ from rag_assistant.scraping.urls import section_from_url
 logger = logging.getLogger(__name__)
 
 # Cookie banners sit outside <nav>/<footer>, so trafilatura keeps their text.
-# Drop any element whose id or class mentions cookies before extracting.
+# Drop any element whose id or class mentions cookies before extracting, except
+# <html>/<body>: sites flag those with classes like "cookie-consent-open".
 _LOWER = "translate({}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')"
 _COOKIE_BANNER_XPATH = (
-    f"//*[contains({_LOWER.format('@id')}, 'cookie')"
-    f" or contains({_LOWER.format('@class')}, 'cookie')]"
+    "//*[not(self::html or self::body)"
+    f" and (contains({_LOWER.format('@id')}, 'cookie')"
+    f" or contains({_LOWER.format('@class')}, 'cookie'))]"
 )
 
 # Lines the extractor leaves behind for empty list items.

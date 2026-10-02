@@ -1,8 +1,10 @@
 """Local storage for raw HTML (data/raw) and clean documents (data/clean)."""
 
 import hashlib
+import html as html_lib
 import json
 import logging
+import os
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
@@ -18,11 +20,13 @@ DOCUMENTS_NAME = "documents.jsonl"
 
 # Chrome and Edge add this comment to every page saved with "Save as".
 _SAVED_FROM = re.compile(r"<!--\s*saved from url=\(\d+\)(\S+)\s*-->", re.IGNORECASE)
+# (?<![-\w]) keeps data-href / data-content from being read as the attribute.
 _CANONICAL = re.compile(
-    r"<link\b(?=[^>]*\brel=[\"']?canonical)[^>]*\bhref=[\"']([^\"']+)", re.IGNORECASE
+    r"<link\b(?=[^>]*\brel=[\"']?canonical)[^>]*(?<![-\w])href=[\"']([^\"']+)", re.IGNORECASE
 )
 _OG_URL = re.compile(
-    r"<meta\b(?=[^>]*\bproperty=[\"']og:url)[^>]*\bcontent=[\"']([^\"']+)", re.IGNORECASE
+    r"<meta\b(?=[^>]*\bproperty=[\"']og:url)[^>]*(?<![-\w])content=[\"']([^\"']+)",
+    re.IGNORECASE,
 )
 
 
@@ -30,9 +34,35 @@ def infer_url(html: str) -> str | None:
     """Recover the original URL of a page saved by hand from a browser."""
     for pattern in (_CANONICAL, _OG_URL, _SAVED_FROM):
         match = pattern.search(html)
-        if match and match.group(1).startswith(("http://", "https://")):
-            return match.group(1)
+        if match:
+            url = html_lib.unescape(match.group(1))
+            if url.startswith(("http://", "https://")):
+                return url
     return None
+
+
+def decode_html(raw: bytes) -> str:
+    """Decode HTML bytes whose charset is not declared by a trustworthy header.
+
+    UTF-8 first (what virtually every current site serves); Windows-1252 as the
+    fallback, since it is what legacy Spanish-language pages and old "Save as"
+    dialogs produce and it can decode any byte sequence.
+    """
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
+def _read_jsonl(path: Path) -> Iterator[dict]:
+    """Yield the JSON objects of a .jsonl file, skipping lines cut short by an interrupted run."""
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Ignoring corrupt line %d of %s", number, path)
 
 
 def _filename_for(url: str) -> str:
@@ -60,12 +90,11 @@ class RawStore:
         manifest = self._dir / MANIFEST_NAME
         if not manifest.exists():
             return {}
-        urls = {}
-        for line in manifest.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                entry = json.loads(line)
-                urls[entry["filename"]] = entry["url"]
-        return urls
+        return {
+            entry["filename"]: entry["url"]
+            for entry in _read_jsonl(manifest)
+            if "filename" in entry and "url" in entry
+        }
 
     def urls(self) -> set[str]:
         """URLs already downloaded by the crawler and still present on disk."""
@@ -87,7 +116,7 @@ class RawStore:
             return
         known = self._manifest_urls()
         for path in sorted(self._dir.glob("*.htm*")):
-            html = path.read_text(encoding="utf-8", errors="replace")
+            html = decode_html(path.read_bytes())
             url = known.get(path.name) or infer_url(html)
             if url is None:
                 logger.warning(
@@ -108,17 +137,27 @@ class CleanStore:
         return self._path
 
     def write(self, documents: Iterable[Document]) -> int:
-        """Replace the file with `documents`; return how many were written."""
+        """Replace the file with `documents`; return how many were written.
+
+        The new content is written to a temporary file and swapped in only when
+        there is at least one document, so a failed or empty run never destroys
+        the result of a previous good one.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._path.with_suffix(".jsonl.tmp")
         count = 0
-        with self._path.open("w", encoding="utf-8") as output:
-            for document in documents:
-                output.write(document.model_dump_json() + "\n")
-                count += 1
+        try:
+            with temporary.open("w", encoding="utf-8") as output:
+                for document in documents:
+                    output.write(document.model_dump_json() + "\n")
+                    count += 1
+            if count:
+                os.replace(temporary, self._path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return count
 
     def read(self) -> list[Document]:
         if not self._path.exists():
             raise ScrapingError(f"{self._path} does not exist; run the cleaning step first")
-        lines = self._path.read_text(encoding="utf-8").splitlines()
-        return [Document.model_validate_json(line) for line in lines if line.strip()]
+        return [Document.model_validate(entry) for entry in _read_jsonl(self._path)]

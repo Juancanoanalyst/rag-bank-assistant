@@ -23,10 +23,13 @@ def parse_sitemap(xml_text: str) -> tuple[list[str], list[str]]:
     except ElementTree.ParseError as exc:
         raise ScrapingError(f"Sitemap is not valid XML: {exc}") from exc
 
+    # Match <loc> in the root's own namespace only: extensions such as
+    # <image:loc> point at assets, not pages.
+    loc_tag = root.tag[: -len(_local_name(root.tag))] + "loc"
     locs = [
         element.text.strip()
-        for element in root.iter()
-        if _local_name(element.tag) == "loc" and element.text and element.text.strip()
+        for element in root.iter(loc_tag)
+        if element.text and element.text.strip()
     ]
     if _local_name(root.tag) == "sitemapindex":
         return [], locs
