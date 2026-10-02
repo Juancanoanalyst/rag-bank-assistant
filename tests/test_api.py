@@ -96,6 +96,8 @@ def test_chat_strips_surrounding_whitespace(client, service):
         {"session_id": "", "question": "hola"},
         {"session_id": "con espacios", "question": "hola"},
         {"session_id": "a/b", "question": "hola"},
+        {"session_id": "..", "question": "hola"},
+        {"session_id": "-inicio", "question": "hola"},
         {"session_id": "x" * 65, "question": "hola"},
         {"session_id": "s1", "question": "x" * 2001},
     ],
