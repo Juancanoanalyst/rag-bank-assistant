@@ -6,7 +6,7 @@ Qdrant client, which keeps Qdrant-specific code in one module.
 
 from abc import ABC, abstractmethod
 
-from rag_assistant.models import Chunk
+from rag_assistant.models import Chunk, RetrievedChunk
 
 
 class VectorStore(ABC):
@@ -29,3 +29,7 @@ class VectorStore(ABC):
     @abstractmethod
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
         """Store chunks with their vectors, overwriting chunks that share an id."""
+
+    @abstractmethod
+    def search(self, vector: list[float], top_k: int) -> list[RetrievedChunk]:
+        """Return the `top_k` chunks closest to `vector`, best first."""
