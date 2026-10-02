@@ -44,7 +44,10 @@ class FastEmbedReranker(Reranker):
         if not candidates:
             return []
         try:
-            logits = list(self._load().rerank(query, [item.chunk.text for item in candidates]))
+            # Title included: a chunk such as "Tasa: 9 % E.A." only makes sense
+            # next to the name of the product page it came from.
+            passages = [item.chunk.embedding_text for item in candidates]
+            logits = list(self._load().rerank(query, passages))
         except Exception as exc:
             raise RetrievalError(f"Reranking {len(candidates)} chunks failed: {exc}") from exc
 
