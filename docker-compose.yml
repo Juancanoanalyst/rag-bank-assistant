@@ -1,0 +1,125 @@
+# Start everything with:  docker compose up --build
+#
+# Start-up order:
+#   qdrant, ollama          long-running infrastructure
+#   ollama-init, ingest     one-shot jobs: pull the LLM, crawl + index the site
+#   api                     waits for both jobs to finish successfully
+#   ui                      waits for the api to be healthy  ->  http://localhost:8501
+
+x-app: &app
+  build: .
+  image: rag-bank-assistant:latest
+  env_file:
+    - path: .env
+      required: false # the defaults work without a .env file
+  environment: &app-env
+    # Inside the compose network the services are reached by name; these
+    # override whatever .env says so a .env written for local runs still works.
+    QDRANT_URL: http://qdrant:6333
+    OLLAMA_BASE_URL: http://ollama:11434
+    API_URL: http://api:8000
+    RAW_DATA_DIR: /app/data/raw
+    CLEAN_DATA_DIR: /app/data/clean
+    HISTORY_DB_PATH: /app/data/history/history.db
+    MODEL_CACHE_DIR: /app/data/models
+  volumes:
+    - app_data:/app/data
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The image ships neither curl nor wget; bash can open a TCP socket itself.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+    # Downloads the model on the first start (about 2 GB); a no-op afterwards.
+    # Retried because a transient DNS or network error would otherwise abort
+    # the whole start-up; the download resumes where it stopped.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for attempt in 1 2 3 4 5; do
+          ollama pull "$$MODEL" && exit 0
+          echo "pull failed (attempt $$attempt of 5), retrying in 10 s"
+          sleep 10
+        done
+        exit 1
+    restart: "no"
+
+  ingest:
+    <<: *app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    command: ["python", "-m", "rag_assistant.ingest"]
+    restart: "no"
+
+  api:
+    <<: *app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_completed_successfully
+    command: ["python", "-m", "rag_assistant.api"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  ui:
+    <<: *app
+    depends_on:
+      api:
+        condition: service_healthy
+    command:
+      - streamlit
+      - run
+      - src/rag_assistant/ui/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  app_data:

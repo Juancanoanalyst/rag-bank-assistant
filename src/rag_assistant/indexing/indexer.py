@@ -49,7 +49,7 @@ class Indexer:
         the current embedder is left alone, which makes container start-up
         idempotent.
         """
-        if skip_if_indexed and self._is_already_indexed():
+        if skip_if_indexed and self.is_indexed():
             return IndexReport(skipped=True)
 
         chunks = list(self._splitter.split_documents(documents))
@@ -75,7 +75,8 @@ class Indexer:
         logger.info("Indexed %d documents as %d chunks", len(documents), len(chunks))
         return IndexReport(documents=len(documents), chunks=len(chunks))
 
-    def _is_already_indexed(self) -> bool:
+    def is_indexed(self) -> bool:
+        """True when the collection is populated with vectors from the current embedder."""
         existing = self._store.count()
         if not existing:
             return False

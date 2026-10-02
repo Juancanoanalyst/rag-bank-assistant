@@ -148,3 +148,66 @@ def test_app_rejects_an_invalid_session_id_without_calling_the_api(app):
 
     assert not app.exception
     assert "solo admite" in app.warning[0].value
+
+
+# --- analytics tab -----------------------------------------------------------
+
+METRICS = {
+    "sessions": 2,
+    "messages": 8,
+    "questions": 4,
+    "answered": 3,
+    "avg_messages_per_session": 4.0,
+    "no_answer_rate": 0.25,
+    "latency_p50_ms": 2500.0,
+    "latency_p95_ms": 3850.0,
+    "avg_top_rerank_score": 0.54,
+    "estimated_hours_saved": 0.25,
+    "manual_search_minutes": 5.0,
+    "top_urls": [{"url": "https://www.banco-ejemplo.com.co/cdt.html", "count": 3}],
+    "messages_per_session": [{"session_id": "s1", "messages": 6, "questions": 3}],
+}
+
+
+def run_with_metrics(app, metrics_response: dict) -> AppTest:
+    with responses.RequestsMock() as mock:
+        mock.get(f"{API}/sessions/s1/history", json={"session_id": "s1", "messages": []})
+        mock.get(f"{API}/metrics", **metrics_response)
+        app.session_state.session_id = "s1"
+        app.run()
+    return app
+
+
+def test_analytics_tab_shows_usage_quality_and_impact(app):
+    run_with_metrics(app, {"json": METRICS})
+
+    shown = {metric.label: metric.value for metric in app.metric}
+    assert not app.exception
+    assert shown == {
+        "Sesiones": "2",
+        "Preguntas": "4",
+        "Mensajes por sesión": "4.0",
+        "Latencia p50": "2.5 s",
+        "Latencia p95": "3.9 s",
+        "Sin respuesta": "25%",
+        "Puntaje reranker": "0.54",
+        "Horas ahorradas (estimado)": "0.2 h",
+    }
+    assert len(app.dataframe) == 2
+
+
+def test_analytics_tab_with_no_conversations_yet(app):
+    empty = {**METRICS, "questions": 0, "latency_p50_ms": None, "avg_top_rerank_score": None}
+
+    run_with_metrics(app, {"json": empty})
+
+    assert not app.exception
+    assert any("Aún no hay conversaciones" in info.value for info in app.info)
+    assert len(app.metric) == 0
+
+
+def test_analytics_tab_reports_api_errors(app):
+    run_with_metrics(app, {"status": 500, "json": {"detail": "No se pudo acceder al historial."}})
+
+    assert not app.exception
+    assert any("No se pudo acceder al historial" in error.value for error in app.error)
