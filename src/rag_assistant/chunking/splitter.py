@@ -5,12 +5,14 @@ then sentence, then word) so chunks stay under CHUNK_SIZE without breaking
 sentences unless there is no other way.
 """
 
+import re
 import uuid
 from collections.abc import Iterable, Iterator
 
 from rag_assistant.models import Chunk, Document
 
 DEFAULT_SEPARATORS = ("\n\n", "\n", ". ", " ", "")
+_WHITESPACE = re.compile(r"\s")
 
 
 class RecursiveTextSplitter:
@@ -28,6 +30,7 @@ class RecursiveTextSplitter:
 
     def split_text(self, text: str) -> list[str]:
         """Split text into chunks of at most chunk_size characters."""
+        text = text.replace("\r\n", "\n")
         chunks = self._merge(self._pieces(text, self._separators))
         return [chunk for chunk in chunks if chunk]
 
@@ -51,15 +54,15 @@ class RecursiveTextSplitter:
             return [text]
         for position, separator in enumerate(separators):
             if separator == "":
-                return [
-                    text[start : start + self._size] for start in range(0, len(text), self._size)
-                ]
+                break
             if separator in text:
                 parts = text.split(separator)
                 parts = [part + separator for part in parts[:-1]] + [parts[-1]]
                 remaining = separators[position + 1 :]
                 return [piece for part in parts if part for piece in self._pieces(part, remaining)]
-        return [text[start : start + self._size] for start in range(0, len(text), self._size)]
+        # No separator left: cut by length, leaving room for the overlap to be repeated.
+        step = self._size - self._overlap
+        return [text[start : start + step] for start in range(0, len(text), step)]
 
     def _merge(self, pieces: list[str]) -> list[str]:
         """Pack pieces into chunks, repeating the tail of each chunk at the start of the next."""
@@ -79,13 +82,30 @@ class RecursiveTextSplitter:
         return chunks
 
     def _overlap_tail(self, pieces: list[str], room: int) -> tuple[list[str], int]:
-        """Trailing pieces to repeat: at most chunk_overlap characters, and no more than `room`."""
+        """Text to repeat at the start of the next chunk.
+
+        At most chunk_overlap characters, and no more than `room` (what the next
+        piece leaves free). Whole trailing pieces are preferred; when even the
+        last piece is too long, which is the usual case with sentences, its
+        final words are repeated instead.
+        """
         budget = min(self._overlap, room)
         tail: list[str] = []
         length = 0
         for piece in reversed(pieces):
-            if length + len(piece) > budget:
+            if not piece.strip() or length + len(piece) > budget:
                 break
             tail.insert(0, piece)
             length += len(piece)
-        return tail, length
+        if tail or budget <= 0:
+            return tail, length
+
+        last = pieces[-1]
+        fragment = last[-budget:]
+        if _WHITESPACE.search(last):
+            # Ordinary prose: start the repeated text on a word boundary, or
+            # repeat nothing if not even one whole word fits. Only text with no
+            # whitespace at all (cut by length) is repeated from mid-token.
+            boundary = _WHITESPACE.search(fragment)
+            fragment = fragment[boundary.end() :] if boundary else ""
+        return ([fragment], len(fragment)) if fragment.strip() else ([], 0)

@@ -68,7 +68,8 @@ def test_consecutive_chunks_overlap():
 def test_text_without_separators_is_cut_by_length():
     chunks = RecursiveTextSplitter(50, 10).split_text("x" * 120)
 
-    assert [len(chunk) for chunk in chunks] == [50, 50, 20]
+    assert [len(chunk) for chunk in chunks] == [40, 50, 50]
+    assert "".join([chunks[0]] + [chunk[10:] for chunk in chunks[1:]]) == "x" * 120
 
 
 def test_overlap_must_be_smaller_than_size():
@@ -101,3 +102,20 @@ def test_chunk_ids_are_valid_unique_and_deterministic():
     assert first_run == second_run
     assert len(set(first_run)) == len(first_run)
     assert all(uuid.UUID(chunk_id) for chunk_id in first_run)
+
+
+def test_overlap_repeats_final_words_when_sentences_are_longer_than_the_overlap():
+    sentences = [
+        f"La frase número {number} describe con bastante detalle un producto del banco "
+        f"y sus condiciones para clientes nuevos."
+        for number in range(30)
+    ]
+
+    chunks = RecursiveTextSplitter(450, 70).split_text(" ".join(sentences))
+
+    for previous, current in zip(chunks, chunks[1:], strict=False):
+        repeated = next(
+            current[:length] for length in range(70, 0, -1) if previous.endswith(current[:length])
+        )
+        assert 20 <= len(repeated) <= 70
+        assert not repeated[0].isspace() and previous[-len(repeated) - 1].isspace()
