@@ -1,0 +1,13 @@
+# Visual theme of the Streamlit UI.
+# Colours follow BBVA's public palette (navy and core blue) so the prototype feels
+# at home next to the bank's site. No logo or proprietary typeface is used.
+[theme]
+base = "light"
+primaryColor = "#004481"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#121212"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

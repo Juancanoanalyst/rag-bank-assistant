@@ -6,6 +6,7 @@ import uuid
 import streamlit as st
 
 from rag_assistant.config import get_settings
+from rag_assistant.ui import theme
 from rag_assistant.ui.api_client import ApiClient, ApiError
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][\w.-]{0,63}$")
@@ -136,8 +137,8 @@ def analytics_tab(client: ApiClient) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Asistente BBVA Colombia", page_icon="💬")
-    st.title("Asistente del sitio web BBVA Colombia")
+    st.set_page_config(page_title="Asistente de contenido web · BBVA Colombia", page_icon="💬")
+    st.markdown(theme.CSS + theme.HEADER, unsafe_allow_html=True)
 
     if "session_id" not in st.session_state:
         st.session_state.session_id = new_session_id()
