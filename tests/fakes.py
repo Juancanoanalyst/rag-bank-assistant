@@ -3,6 +3,27 @@
 import hashlib
 
 from rag_assistant.embeddings import Embedder
+from rag_assistant.models import RetrievedChunk
+from rag_assistant.reranking import Reranker
+
+
+class FakeReranker(Reranker):
+    """Scores a chunk by the share of query words it contains."""
+
+    def rerank(
+        self, query: str, candidates: list[RetrievedChunk], top_n: int
+    ) -> list[RetrievedChunk]:
+        words = set(query.lower().split())
+        scored = [
+            item.model_copy(
+                update={
+                    "rerank_score": len(words & set(item.chunk.text.lower().split())) / len(words)
+                }
+            )
+            for item in candidates
+        ]
+        scored.sort(key=lambda item: item.rerank_score, reverse=True)
+        return scored[:top_n]
 
 
 class FakeEmbedder(Embedder):
