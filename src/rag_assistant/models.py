@@ -34,3 +34,13 @@ class Chunk(BaseModel):
     def embedding_text(self) -> str:
         """Text sent to the embedder: the page title gives a short chunk its context."""
         return f"{self.title}\n{self.text}"
+
+
+class RetrievedChunk(BaseModel):
+    """A chunk returned for a query, with the scores that ranked it."""
+
+    chunk: Chunk
+    # Cosine similarity from the vector search (first stage).
+    vector_score: float
+    # Relevance in [0, 1] from the cross-encoder; None when reranking is disabled.
+    rerank_score: float | None = None

@@ -5,8 +5,8 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from rag_assistant.exceptions import IndexingError
-from rag_assistant.models import Chunk
+from rag_assistant.exceptions import IndexingError, RetrievalError
+from rag_assistant.models import Chunk, RetrievedChunk
 from rag_assistant.vectorstore.base import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -64,3 +64,21 @@ class QdrantVectorStore(VectorStore):
             self._client.upsert(self._collection, points=points, wait=True)
         except Exception as exc:
             raise IndexingError(f"Could not write {len(points)} chunks: {exc}") from exc
+
+    def search(self, vector: list[float], top_k: int) -> list[RetrievedChunk]:
+        try:
+            if not self._client.collection_exists(self._collection):
+                raise RetrievalError(
+                    f"Collection {self._collection!r} does not exist; run the indexing step first"
+                )
+            points = self._client.query_points(
+                self._collection, query=vector, limit=top_k, with_payload=True
+            ).points
+        except RetrievalError:
+            raise
+        except Exception as exc:
+            raise RetrievalError(f"Vector search failed: {exc}") from exc
+        return [
+            RetrievedChunk(chunk=Chunk(id=str(point.id), **point.payload), vector_score=point.score)
+            for point in points
+        ]
