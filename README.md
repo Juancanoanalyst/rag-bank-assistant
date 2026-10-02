@@ -61,7 +61,8 @@ CONSULTA (cada pregunta, POST /chat)
 
 ## Requisitos previos
 
-- **Docker** con Docker Compose v2 (probado con Docker Desktop 29.8 en Windows 11 con WSL 2).
+- **Docker** con **Docker Compose 2.24 o superior** (probado con Docker Desktop 29.8 y Compose 5.5 en
+  Windows 11 con WSL 2).
 - **Memoria para Docker: 8 GB recomendados.** Con 4 GB funciona usando un modelo más pequeño
   (ver [Limitaciones conocidas](#limitaciones-conocidas)).
 - **Unos 10 GB de disco** para imágenes, modelos y datos.
@@ -301,13 +302,13 @@ pytest --cov=rag_assistant
 ruff check . && ruff format --check .
 ```
 
-- 305 pruebas; cobertura del 92 % (la página de Streamlit se ejercita con `AppTest`, que la
+- 307 pruebas; cobertura del 92 % (la página de Streamlit se ejercita con `AppTest`, que la
   herramienta de cobertura no contabiliza).
 - **No necesitan red, modelos ni servicios**: el HTTP se simula con `responses`, los modelos con
   dobles, Qdrant corre en memoria y el scraper usa fixtures HTML guardados en `tests/fixtures`.
 - Requieren Python 3.12.
 - Un flujo de GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) ejecuta el
-  linter y las pruebas en cada push y pull request.
+  linter y las pruebas en cada pull request y en cada push a `main`.
 
 ## Resultados medidos
 
@@ -323,7 +324,7 @@ Corrida real de punta a punta con `docker compose up --build` (Windows 11, Docke
   | ¿Qué necesito para solicitar un crédito de vivienda? | Respondida con el artículo de crédito de vivienda (puntaje 0,65) |
   | ¿y qué documentos piden? | Reescrita como "¿Qué documentos necesitas para solicitar un crédito de vivienda?" y respondida |
   | ¿Cómo funciona Bre-B para recibir dinero? | Respondida, con dos fuentes |
-  | ¿Cuál es la capital de Francia? | "No encontré información" (puntaje 0,06), sin llamar al LLM |
+  | ¿Cuál es la capital de Francia? | "No encontré información" (puntaje 0,06), sin pedir respuesta al LLM |
 
 - **Latencia en esa máquina:** entre 29 y 45 s por pregunta respondida; 148 s la primera, que
   incluyó descargar y cargar el reranker; 7 s la pregunta sin respuesta.
