@@ -2,7 +2,7 @@ import pytest
 from fakes import FakeLLM
 
 from rag_assistant import factory
-from rag_assistant.exceptions import LLMError, RetrievalError
+from rag_assistant.exceptions import HistoryError, LLMError, RetrievalError
 from rag_assistant.history import SQLiteHistoryRepository
 from rag_assistant.models import Chunk, RetrievedChunk
 from rag_assistant.service import prompts
@@ -202,7 +202,17 @@ def test_nothing_retrieved_is_no_answer(history):
     assert llm.calls == []
 
 
-@pytest.mark.parametrize("reply", ["NO_ENCONTRADO", "no_encontrado.", "Lo siento. NO_ENCONTRADO"])
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "NO_ENCONTRADO",
+        "no_encontrado.",
+        "Lo siento. NO_ENCONTRADO",
+        "No encontrado",
+        "NO ENCONTRADO.",
+        "No encontré información sobre eso en el contenido del sitio web del banco.",
+    ],
+)
 def test_llm_can_declare_that_the_context_has_no_answer(history, reply):
     service, _ = make_service(history, FakeLLM(reply))
 
@@ -225,7 +235,94 @@ def test_without_a_reranker_the_llm_decides(history):
     assert result.rerank_scores == []
 
 
+def test_refused_exchanges_are_not_replayed_to_the_llm(history):
+    refused, _ = make_service(history, FakeLLM("NO_ENCONTRADO"))
+    refused.ask("s1", "¿Cuál es la tasa a 90 días?")
+    answered, _ = make_service(history, FakeLLM("Un CDT es un depósito."))
+    answered.ask("s1", "¿Qué es un CDT?")
+    llm = FakeLLM("¿Cuál es el monto mínimo de un CDT?", "Desde un millón.")
+    service, _ = make_service(history, llm)
+
+    service.ask("s1", "¿y el monto mínimo?")
+
+    replayed = " ".join(message.content for message in llm.calls[1][1:-1])
+    assert "¿Qué es un CDT?" in replayed
+    assert "tasa a 90 días" not in replayed
+    assert prompts.NO_ANSWER_MESSAGE not in replayed
+    assert prompts.NO_ANSWER_MESSAGE not in llm.calls[0][-1].content
+
+
+def test_odd_history_window_does_not_start_with_an_orphan_answer(history):
+    for number in (1, 2):
+        service, _ = make_service(history, FakeLLM("condensada", f"respuesta {number}"))
+        service.ask("s1", f"pregunta {number}")
+    llm = FakeLLM("condensada", "respuesta 3")
+    service, _ = make_service(history, llm, max_messages=3)
+
+    service.ask("s1", "pregunta 3")
+
+    assert [message.role for message in llm.calls[1]] == ["system", "user", "assistant", "user"]
+    assert llm.calls[1][1].content == "pregunta 2"
+
+
+# --- condensed question is not trusted ---------------------------------------
+
+
+def ask_follow_up(history, condensed_reply: str):
+    first, _ = make_service(history, FakeLLM("Un CDT es un depósito."))
+    first.ask("s1", "¿Qué es un CDT?")
+    llm = FakeLLM(condensed_reply, "Desde un millón.")
+    service, retriever = make_service(history, llm)
+    service.ask("s1", "¿y el monto mínimo?")
+    return retriever.queries[-1], llm
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        'Pregunta reescrita: "¿Cuál es el monto mínimo de un CDT?"',
+        "¿Cuál es el monto mínimo de un CDT?\n\nExplicación: el usuario se refiere al CDT.",
+        "  «¿Cuál es el monto mínimo de un CDT?»  ",
+    ],
+)
+def test_condensed_question_is_reduced_to_its_first_clean_line(history, reply):
+    query, _ = ask_follow_up(history, reply)
+
+    assert query == "¿Cuál es el monto mínimo de un CDT?"
+
+
+@pytest.mark.parametrize("reply", ["   \n  ", "El monto mínimo depende de " + "muchas cosas " * 40])
+def test_unusable_condensed_question_falls_back_to_the_original(history, reply):
+    query, _ = ask_follow_up(history, reply)
+
+    assert query == "¿y el monto mínimo?"
+
+
+def test_condensing_uses_a_short_token_budget(history):
+    _, llm = ask_follow_up(history, "¿Cuál es el monto mínimo de un CDT?")
+
+    assert llm.max_tokens == [96, None]
+
+
 # --- failures ----------------------------------------------------------------
+
+
+class BrokenHistory(SQLiteHistoryRepository):
+    def recent(self, session_id, limit):
+        raise HistoryError("database is locked")
+
+    def add(self, messages):
+        raise HistoryError("disk full")
+
+
+def test_history_failures_do_not_block_the_answer(tmp_path):
+    service, retriever = make_service(BrokenHistory(tmp_path / "h.db"), FakeLLM("Un CDT es..."))
+
+    result = service.ask("s1", "¿Qué es un CDT?")
+
+    assert result.answered
+    assert result.answer == "Un CDT es..."
+    assert retriever.queries == ["¿Qué es un CDT?"]
 
 
 def test_llm_failure_propagates_and_nothing_is_saved(history):

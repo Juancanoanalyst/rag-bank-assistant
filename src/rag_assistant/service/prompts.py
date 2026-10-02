@@ -29,6 +29,17 @@ Si la pregunta ya se entiende sola, devuélvela sin cambios. Devuelve únicament
 reescrita, sin explicaciones ni comillas."""
 
 
+def is_no_answer(reply: str) -> bool:
+    """True when the model declined to answer, however it spelled the marker.
+
+    Small models write "No encontrado", "NO ENCONTRADO." or copy the refusal
+    sentence itself, so matching is done on a normalised form.
+    """
+    normalised = reply.upper().replace(" ", "_")
+    refusal_start = NO_ANSWER_MESSAGE[:30].upper().replace(" ", "_")
+    return NO_ANSWER_MARKER in normalised or normalised.startswith(refusal_start)
+
+
 def format_context(chunks: list[RetrievedChunk]) -> str:
     return "\n\n".join(
         f"[{number}] {item.chunk.title}\nFuente: {item.chunk.url}\n{item.chunk.text}"
@@ -57,7 +68,7 @@ def condense_messages(question: str, history: list[StoredMessage]) -> list[ChatM
         f"{'Usuario' if message.role == 'user' else 'Asistente'}: {message.content}"
         for message in history
     )
-    user = f"CONVERSACIÓN:\n{transcript}\n\nÚLTIMA PREGUNTA: {question}"
+    user = f"CONVERSACIÓN:\n<<<\n{transcript}\n>>>\n\nÚLTIMA PREGUNTA: {question}"
     return [
         ChatMessage(role="system", content=CONDENSE_PROMPT),
         ChatMessage(role="user", content=user),

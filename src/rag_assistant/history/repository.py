@@ -122,16 +122,19 @@ class SQLiteHistoryRepository(HistoryRepository):
                 rows = connection.execute(query, parameters).fetchall()
         except sqlite3.Error as exc:
             raise HistoryError(f"Could not read the conversation history: {exc}") from exc
-        return [
-            StoredMessage(
-                session_id=row["session_id"],
-                role=row["role"],
-                content=row["content"],
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                latency_ms=row["latency_ms"],
-                retrieved_urls=json.loads(row["retrieved_urls"]),
-                rerank_scores=json.loads(row["rerank_scores"]),
-                answered=None if row["answered"] is None else bool(row["answered"]),
-            )
-            for row in rows
-        ]
+        try:
+            return [
+                StoredMessage(
+                    session_id=row["session_id"],
+                    role=row["role"],
+                    content=row["content"],
+                    timestamp=datetime.fromisoformat(row["timestamp"]),
+                    latency_ms=row["latency_ms"],
+                    retrieved_urls=json.loads(row["retrieved_urls"]),
+                    rerank_scores=json.loads(row["rerank_scores"]),
+                    answered=None if row["answered"] is None else bool(row["answered"]),
+                )
+                for row in rows
+            ]
+        except ValueError as exc:  # bad JSON, bad timestamp or a row pydantic rejects
+            raise HistoryError(f"The history database holds a corrupt row: {exc}") from exc
