@@ -184,3 +184,17 @@ def test_factory_builds_retriever_with_configured_limits(settings):
     retriever = factory.build_retriever(custom)
 
     assert (retriever._top_k, retriever._rerank_top_n) == (7, 3)
+
+
+def test_warm_up_runs_both_models_once(store):
+    embedder = FakeEmbedder(64)
+    calls = []
+
+    class RecordingReranker(FakeReranker):
+        def rerank(self, query, candidates, top_n):
+            calls.append((query, len(candidates)))
+            return super().rerank(query, candidates, top_n)
+
+    Retriever(embedder, store, RecordingReranker(), top_k=3, rerank_top_n=2).warm_up()
+
+    assert calls == [("hola", 1)]
