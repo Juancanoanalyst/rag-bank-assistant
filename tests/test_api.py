@@ -182,3 +182,40 @@ def test_history_failure_is_reported_as_500(service, tmp_path):
 
     assert response.status_code == 500
     assert "locked" not in response.text
+
+
+def test_metrics_summarise_the_stored_history(service, history):
+    asked_at = datetime(2026, 4, 10, 15, 0, tzinfo=UTC)
+    history.add(
+        [
+            StoredMessage(session_id="s1", role="user", content="p", timestamp=asked_at),
+            StoredMessage(
+                session_id="s1",
+                role="assistant",
+                content="r",
+                timestamp=asked_at,
+                latency_ms=2000.0,
+                retrieved_urls=[SOURCE],
+                rerank_scores=[0.8],
+                answered=True,
+            ),
+        ]
+    )
+    app = create_app(service=service, history=history, manual_search_minutes=12)
+
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert (body["sessions"], body["questions"], body["answered"]) == (1, 1, 1)
+    assert body["latency_p50_ms"] == 2000.0
+    assert body["estimated_hours_saved"] == 0.2
+    assert body["top_urls"] == [{"url": SOURCE, "count": 1}]
+
+
+def test_metrics_with_no_history(client):
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.json()["questions"] == 0

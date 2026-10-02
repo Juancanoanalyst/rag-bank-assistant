@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from rag_assistant import __version__
+from rag_assistant.analytics import Metrics, compute_metrics
 from rag_assistant.api.schemas import ChatRequest, Health, SessionHistory, SessionId
 from rag_assistant.config import get_settings
 from rag_assistant.exceptions import (
@@ -46,7 +47,9 @@ def _warm_up(service: RAGService) -> None:
 
 
 def create_app(
-    service: RAGService | None = None, history: HistoryRepository | None = None
+    service: RAGService | None = None,
+    history: HistoryRepository | None = None,
+    manual_search_minutes: float = 5.0,
 ) -> FastAPI:
     """Build the application.
 
@@ -62,12 +65,14 @@ def create_app(
             configure_logging(settings.log_level)
             app.state.service = build_rag_service(settings)
             app.state.history = build_history(settings)
+            app.state.manual_search_minutes = settings.manual_search_minutes
             # Loading the models takes tens of seconds; do it now, off the event
             # loop, rather than during the first user's question.
             threading.Thread(target=_warm_up, args=(app.state.service,), daemon=True).start()
         else:
             app.state.service = service
             app.state.history = history
+            app.state.manual_search_minutes = manual_search_minutes
         yield
 
     app = FastAPI(title="RAG Bank Assistant", version=__version__, lifespan=lifespan)
@@ -95,5 +100,10 @@ def create_app(
     def session_history(session_id: SessionId, request: Request) -> SessionHistory:
         messages = request.app.state.history.session(session_id)
         return SessionHistory(session_id=session_id, messages=messages)
+
+    @app.get("/metrics")
+    def metrics(request: Request) -> Metrics:
+        state = request.app.state
+        return compute_metrics(state.history.all(), state.manual_search_minutes)
 
     return app
