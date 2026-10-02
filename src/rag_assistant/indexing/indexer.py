@@ -8,7 +8,7 @@ from rag_assistant.chunking import RecursiveTextSplitter
 from rag_assistant.embeddings import Embedder
 from rag_assistant.exceptions import IndexingError
 from rag_assistant.models import Document
-from rag_assistant.vectorstore import QdrantVectorStore
+from rag_assistant.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class Indexer:
         self,
         splitter: RecursiveTextSplitter,
         embedder: Embedder,
-        store: QdrantVectorStore,
+        store: VectorStore,
         batch_size: int = 32,
     ) -> None:
         self._splitter = splitter
@@ -40,23 +40,52 @@ class Indexer:
         clean guarantees that chunks of pages removed from the site, or left
         over from a different chunk size, never linger.
 
-        With `skip_if_indexed`, an already populated collection is left alone,
-        which makes container start-up idempotent.
+        Everything is chunked and embedded before the existing collection is
+        touched, so a failure while embedding keeps the previous index. If
+        writing fails, the half-built collection is dropped rather than left
+        looking complete.
+
+        With `skip_if_indexed`, a populated collection whose vector size matches
+        the current embedder is left alone, which makes container start-up
+        idempotent.
         """
-        if skip_if_indexed and (existing := self._store.count()):
-            logger.info("Collection already holds %d chunks; skipping indexing", existing)
+        if skip_if_indexed and self._is_already_indexed():
             return IndexReport(skipped=True)
-        if not documents:
-            raise IndexingError("There are no documents to index; run the scraping step first")
 
         chunks = list(self._splitter.split_documents(documents))
-        self._store.recreate(self._embedder.dimension)
-        for number, batch in enumerate(batched(chunks, self._batch_size), start=1):
-            vectors = self._embedder.embed_documents([chunk.embedding_text for chunk in batch])
-            self._store.upsert(list(batch), vectors)
-            logger.info(
-                "Indexed %d/%d chunks", min(number * self._batch_size, len(chunks)), len(chunks)
+        if not chunks:
+            raise IndexingError("There is no text to index; run the scraping step first")
+
+        vectors: list[list[float]] = []
+        for batch in batched(chunks, self._batch_size):
+            vectors.extend(
+                self._embedder.embed_documents([chunk.embedding_text for chunk in batch])
             )
+            logger.info("Embedded %d/%d chunks", len(vectors), len(chunks))
+
+        self._store.recreate(self._embedder.dimension)
+        try:
+            for start in range(0, len(chunks), self._batch_size):
+                end = start + self._batch_size
+                self._store.upsert(chunks[start:end], vectors[start:end])
+        except IndexingError:
+            self._store.drop()
+            raise
 
         logger.info("Indexed %d documents as %d chunks", len(documents), len(chunks))
         return IndexReport(documents=len(documents), chunks=len(chunks))
+
+    def _is_already_indexed(self) -> bool:
+        existing = self._store.count()
+        if not existing:
+            return False
+        stored_size = self._store.vector_size()
+        if stored_size != self._embedder.dimension:
+            logger.warning(
+                "Collection holds vectors of size %s but the embedder produces %d; re-indexing",
+                stored_size,
+                self._embedder.dimension,
+            )
+            return False
+        logger.info("Collection already holds %d chunks; skipping indexing", existing)
+        return True

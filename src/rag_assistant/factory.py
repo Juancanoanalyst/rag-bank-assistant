@@ -15,7 +15,7 @@ from rag_assistant.embeddings import Embedder
 from rag_assistant.embeddings.fastembed_embedder import FastEmbedEmbedder
 from rag_assistant.exceptions import ConfigurationError
 from rag_assistant.indexing import Indexer
-from rag_assistant.vectorstore import QdrantVectorStore
+from rag_assistant.vectorstore import QdrantVectorStore, VectorStore
 
 _EMBEDDERS: dict[str, Callable[[Settings], Embedder]] = {
     "fastembed": lambda settings: FastEmbedEmbedder(
@@ -27,20 +27,20 @@ _EMBEDDERS: dict[str, Callable[[Settings], Embedder]] = {
 
 
 def build_embedder(settings: Settings) -> Embedder:
-    try:
-        return _EMBEDDERS[settings.embedder_provider](settings)
-    except KeyError:
+    builder = _EMBEDDERS.get(settings.embedder_provider)
+    if builder is None:
         raise ConfigurationError(
             f"Unknown EMBEDDER_PROVIDER={settings.embedder_provider!r}; "
             f"choose one of {sorted(_EMBEDDERS)}"
-        ) from None
+        )
+    return builder(settings)
 
 
 def build_splitter(settings: Settings) -> RecursiveTextSplitter:
     return RecursiveTextSplitter(settings.chunk_size, settings.chunk_overlap)
 
 
-def build_vector_store(settings: Settings) -> QdrantVectorStore:
+def build_vector_store(settings: Settings) -> VectorStore:
     client = QdrantClient(url=settings.qdrant_url, timeout=settings.qdrant_timeout_seconds)
     return QdrantVectorStore(client, settings.qdrant_collection)
 
