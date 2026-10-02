@@ -34,20 +34,26 @@ class Settings(BaseSettings):
     clean_data_dir: Path = Path("data/clean")
 
     # --- Chunking ---
-    chunk_size: int = Field(default=800, gt=0)
-    chunk_overlap: int = Field(default=120, ge=0)
+    # Characters. The default embedding model reads at most 128 tokens (~500 characters
+    # of Spanish); longer chunks would be silently truncated when embedded.
+    chunk_size: int = Field(default=450, gt=0)
+    chunk_overlap: int = Field(default=70, ge=0)
 
     # --- Embeddings / reranker (fastembed, ONNX) ---
     embedder_provider: Literal["fastembed"] = "fastembed"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     reranker_provider: Literal["fastembed", "none"] = "fastembed"
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
+    embedding_batch_size: int = Field(default=32, gt=0)
+    # Where fastembed keeps downloaded models (a Docker volume in compose).
+    model_cache_dir: Path = Path("data/models")
 
     # --- Vector store ---
     # Service URLs default to localhost for runs outside Docker; .env.example
     # points them at the compose service names.
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "bank_site"
+    qdrant_timeout_seconds: float = Field(default=30.0, gt=0)
 
     # --- Retrieval ---
     top_k: int = Field(default=20, gt=0)

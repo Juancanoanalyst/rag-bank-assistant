@@ -7,9 +7,11 @@ name = "rag-bank-assistant"
 version = "0.1.0"
 description = "Asistente RAG sobre el sitio web público de un banco (bbva.com.co)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic-settings>=2.4,<3",
+    "qdrant-client>=1.12,<2",
+    "fastembed>=0.7,<1",
     "protego>=0.3,<1",
     "requests>=2.32,<3",
     "trafilatura>=2.0,<3",
@@ -31,7 +33,7 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

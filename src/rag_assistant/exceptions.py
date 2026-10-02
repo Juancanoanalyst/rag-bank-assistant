@@ -17,6 +17,10 @@ class ScrapingError(RAGError):
     """A page or sitemap could not be fetched or parsed."""
 
 
+class EmbeddingError(RAGError):
+    """The embedding model could not be loaded or failed to embed text."""
+
+
 class IndexingError(RAGError):
     """Chunks could not be embedded or written to the vector store."""
 
