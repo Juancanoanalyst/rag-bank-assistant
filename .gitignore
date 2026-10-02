@@ -24,6 +24,7 @@ data/clean/*
 !data/raw/.gitkeep
 !data/clean/.gitkeep
 data/history/
+data/models/
 *.db
 *.db-*
 *.sqlite3
