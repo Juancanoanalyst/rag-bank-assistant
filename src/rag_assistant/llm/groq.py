@@ -27,12 +27,12 @@ class GroqLLM(LLMClient):
         self._timeout = timeout
         self._session = session or requests.Session()
 
-    def generate(self, messages: list[ChatMessage]) -> str:
+    def generate(self, messages: list[ChatMessage], max_tokens: int | None = None) -> str:
         payload = {
             "model": self._model,
             "messages": [message.model_dump() for message in messages],
             "temperature": self._temperature,
-            "max_tokens": self._max_tokens,
+            "max_tokens": max_tokens or self._max_tokens,
         }
         body = post_json(
             self._session,

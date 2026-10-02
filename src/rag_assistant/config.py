@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     llm_provider: Literal["ollama", "groq"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
+    # Context window requested from Ollama; its default is small and truncates silently.
+    ollama_num_ctx: int = Field(default=8192, gt=0)
     groq_api_key: SecretStr | None = None
     groq_model: str = "llama-3.1-8b-instant"
     llm_temperature: float = Field(default=0.1, ge=0, le=2)

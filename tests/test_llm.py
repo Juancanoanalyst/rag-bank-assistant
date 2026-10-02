@@ -25,6 +25,7 @@ def make_ollama(**overrides) -> OllamaLLM:
         "temperature": 0.1,
         "max_tokens": 256,
         "timeout": 5,
+        "num_ctx": 8192,
     }
     return OllamaLLM(**{**options, **overrides})
 
@@ -56,7 +57,8 @@ def test_ollama_sends_chat_request_and_returns_the_reply():
             {"role": "user", "content": "¿Qué es un CDT?"},
         ],
         "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 256},
+        "keep_alive": "30m",
+        "options": {"temperature": 0.1, "num_predict": 256, "num_ctx": 8192},
     }
 
 

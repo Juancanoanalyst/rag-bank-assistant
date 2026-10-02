@@ -11,5 +11,8 @@ from rag_assistant.models import ChatMessage
 
 class LLMClient(ABC):
     @abstractmethod
-    def generate(self, messages: list[ChatMessage]) -> str:
-        """Return the assistant's reply to a chat conversation."""
+    def generate(self, messages: list[ChatMessage], max_tokens: int | None = None) -> str:
+        """Return the assistant's reply to a chat conversation.
+
+        `max_tokens` overrides the configured answer length for this call.
+        """

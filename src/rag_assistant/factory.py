@@ -110,6 +110,7 @@ _LLMS: dict[str, Callable[[Settings], LLMClient]] = {
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_timeout_seconds,
+        num_ctx=settings.ollama_num_ctx,
     ),
     "groq": _build_groq,
 }

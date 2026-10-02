@@ -18,9 +18,11 @@ class FakeLLM(LLMClient):
     def __init__(self, *replies: str | Exception) -> None:
         self._replies = list(replies)
         self.calls: list[list[ChatMessage]] = []
+        self.max_tokens: list[int | None] = []
 
-    def generate(self, messages: list[ChatMessage]) -> str:
+    def generate(self, messages: list[ChatMessage], max_tokens: int | None = None) -> str:
         self.calls.append(messages)
+        self.max_tokens.append(max_tokens)
         if not self._replies:
             raise LLMError("FakeLLM has no scripted reply left")
         reply = self._replies.pop(0)
