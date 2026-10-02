@@ -39,6 +39,10 @@ class RAGService:
         self._history_max_messages = history_max_messages
         self._min_rerank_score = min_rerank_score
 
+    def warm_up(self) -> None:
+        """Load the embedding and reranking models before the first question."""
+        self._retriever.warm_up()
+
     def ask(self, session_id: str, question: str) -> ChatResult:
         """Answer `question` within the conversation `session_id` and persist the exchange."""
         started = time.perf_counter()
