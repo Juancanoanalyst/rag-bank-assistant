@@ -1,7 +1,5 @@
 """URL helpers shared by the crawler and the cleaner."""
 
-from collections.abc import Iterable
-from itertools import zip_longest
 from urllib.parse import urlparse
 
 # How many leading path segments describe the site section (e.g. personas/productos).
@@ -16,18 +14,13 @@ def section_from_url(url: str) -> str:
     return "/".join(folders[:SECTION_DEPTH]) or HOME_SECTION
 
 
-def spread_by_section(urls: Iterable[str], limit: int) -> list[str]:
-    """Pick up to `limit` URLs, taking turns between site sections.
+def sample_evenly(urls: list[str], limit: int) -> list[str]:
+    """Pick up to `limit` URLs at regular intervals along the list.
 
     A sitemap lists one section after another, so "the first N URLs" would index
-    a single corner of the site. Round-robin keeps small sections complete and
-    splits the remaining budget between the large ones.
+    a single corner of the site. Evenly spaced picks cover every section in
+    proportion to its size, and the choice is deterministic between runs.
     """
-    by_section: dict[str, list[str]] = {}
-    for url in urls:
-        by_section.setdefault(section_from_url(url), []).append(url)
-
-    selected = [
-        url for turn in zip_longest(*by_section.values()) for url in turn if url is not None
-    ]
-    return selected[:limit]
+    if len(urls) <= limit:
+        return list(urls)
+    return [urls[index * len(urls) // limit] for index in range(limit)]

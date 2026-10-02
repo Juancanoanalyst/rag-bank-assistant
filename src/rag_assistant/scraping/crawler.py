@@ -4,7 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -12,8 +12,8 @@ from rag_assistant.config import Settings
 from rag_assistant.exceptions import ScrapingError
 from rag_assistant.scraping.robots import RobotsPolicy
 from rag_assistant.scraping.sitemap import collect_urls
-from rag_assistant.scraping.storage import RawStore
-from rag_assistant.scraping.urls import spread_by_section
+from rag_assistant.scraping.storage import RawStore, decode_html
+from rag_assistant.scraping.urls import sample_evenly
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,9 @@ _SKIPPED_EXTENSIONS = (
 
 # Upper bound on sitemap entries read before choosing which pages to download.
 _MAX_SITEMAP_URLS = 20_000
+_MAX_REDIRECTS = 5
+# Hammering a site that answers 403/429 to everything would be impolite.
+_MAX_CONSECUTIVE_FAILURES = 10
 
 
 @dataclass
@@ -81,23 +84,32 @@ class SiteCrawler:
             else:
                 report.disallowed += 1
 
-        selected = spread_by_section(allowed, settings.scraper_max_pages)
+        selected = sample_evenly(allowed, settings.scraper_max_pages)
         already_stored = self._store.urls()
         delay = max(settings.scraper_delay_seconds, robots.crawl_delay)
         logger.info("Sitemap lists %d allowed pages; fetching %d", len(allowed), len(selected))
 
+        consecutive_failures = 0
         for position, url in enumerate(selected, start=1):
             if url in already_stored:
                 report.cached += 1
                 continue
+            if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Stopping: %d pages failed in a row, the site may be rejecting this client",
+                    consecutive_failures,
+                )
+                break
 
             self._sleep(delay)
             try:
-                self._store.save(url, self._get_html(url))
+                self._store.save(*self._get_html(url, robots))
                 report.saved += 1
+                consecutive_failures = 0
                 logger.info("[%d/%d] saved %s", position, len(selected), url)
             except ScrapingError as exc:
                 report.failed += 1
+                consecutive_failures += 1
                 logger.warning("[%d/%d] skipped: %s", position, len(selected), exc)
 
         logger.info(
@@ -113,21 +125,45 @@ class SiteCrawler:
         parsed = urlparse(url)
         return parsed.netloc == self._host and not parsed.path.lower().endswith(_SKIPPED_EXTENSIONS)
 
-    def _get(self, url: str) -> requests.Response:
+    def _request(self, url: str, allow_redirects: bool) -> requests.Response:
         try:
-            response = self._session.get(url, timeout=self._settings.scraper_timeout_seconds)
+            return self._session.get(
+                url,
+                timeout=self._settings.scraper_timeout_seconds,
+                allow_redirects=allow_redirects,
+            )
         except requests.RequestException as exc:
             raise ScrapingError(f"Request to {url} failed: {exc}") from exc
-        if response.status_code != 200:
-            raise ScrapingError(f"{url} returned HTTP {response.status_code}")
-        return response
 
     def _get_text(self, url: str) -> str:
-        return self._get(url).text
+        response = self._request(url, allow_redirects=True)
+        if response.status_code != 200:
+            raise ScrapingError(f"{url} returned HTTP {response.status_code}")
+        return response.text
 
-    def _get_html(self, url: str) -> str:
-        response = self._get(url)
+    def _get_html(self, url: str, robots: RobotsPolicy) -> tuple[str, str]:
+        """Download a page and return (final_url, html).
+
+        Redirects are followed by hand so that every hop is checked against the
+        host filter and robots.txt: a sitemap URL must not smuggle in a
+        disallowed path or another site.
+        """
+        for _ in range(_MAX_REDIRECTS + 1):
+            response = self._request(url, allow_redirects=False)
+            if not response.is_redirect:
+                break
+            url = urljoin(url, response.headers["Location"])
+            if not self._is_candidate(url) or not robots.allows(url):
+                raise ScrapingError(f"Redirect to {url} leaves the allowed scope")
+        else:
+            raise ScrapingError(f"Too many redirects, last one to {url}")
+
+        if response.status_code != 200:
+            raise ScrapingError(f"{url} returned HTTP {response.status_code}")
         content_type = response.headers.get("Content-Type", "")
         if "html" not in content_type:
             raise ScrapingError(f"{url} is not HTML (Content-Type: {content_type or 'missing'})")
-        return response.text
+        # Without an explicit charset, requests assumes ISO-8859-1 and garbles accents.
+        if "charset=" in content_type.lower():
+            return url, response.text
+        return url, decode_html(response.content)

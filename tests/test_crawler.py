@@ -163,3 +163,49 @@ def test_crawl_does_not_download_pages_already_stored(site, settings):
     assert sleeps == []
     # Second run only re-reads robots.txt and the sitemap.
     assert len(site.calls) - first_run_requests == 2
+
+
+def test_crawl_refuses_redirects_to_disallowed_paths_or_other_hosts(site, settings):
+    site.replace(responses.GET, AHORROS, status=302, headers={"Location": PRIVADA})
+    site.replace(
+        responses.GET, TARJETAS, status=301, headers={"Location": "https://otro-dominio.com/x"}
+    )
+
+    report = make_crawler(settings).crawl()
+
+    assert (report.saved, report.failed) == (1, 2)
+    assert PRIVADA not in requested_urls(site)
+    assert not any("otro-dominio.com" in url for url in requested_urls(site))
+
+
+def test_crawl_follows_allowed_redirects_and_stores_the_final_url(site, settings):
+    site.replace(responses.GET, AHORROS, status=301, headers={"Location": "/personas/nueva.html"})
+    site.get(f"{SITE}/personas/nueva.html", body="<html>nueva</html>", headers=HTML)
+
+    make_crawler(settings).crawl()
+
+    stored = RawStore(settings.raw_data_dir).urls()
+    assert f"{SITE}/personas/nueva.html" in stored
+    assert AHORROS not in stored
+
+
+def test_crawl_gives_up_on_redirect_loops(site, settings):
+    site.replace(responses.GET, AHORROS, status=302, headers={"Location": AHORROS})
+
+    report = make_crawler(settings).crawl()
+
+    assert (report.saved, report.failed) == (2, 1)
+
+
+def test_crawl_stops_after_many_consecutive_failures(settings):
+    pages = [f"{SITE}/personas/blog/nota-{number}.html" for number in range(15)]
+    sitemap = "<urlset>" + "".join(f"<url><loc>{url}</loc></url>" for url in pages) + "</urlset>"
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as mock:
+        mock.get(f"{SITE}/robots.txt", status=404)
+        mock.get(f"{SITE}/sitemap.xml", body=sitemap)
+        for url in pages:
+            mock.get(url, status=403)
+
+        report = make_crawler(settings).crawl()
+
+    assert (report.saved, report.failed) == (0, 10)
