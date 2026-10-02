@@ -1,8 +1,11 @@
+import threading
 from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
+from rag_assistant.api import __main__ as api_main
+from rag_assistant.api import app as api_app
 from rag_assistant.api.app import create_app
 from rag_assistant.exceptions import (
     ConfigurationError,
@@ -93,6 +96,8 @@ def test_chat_strips_surrounding_whitespace(client, service):
         {"session_id": "", "question": "hola"},
         {"session_id": "con espacios", "question": "hola"},
         {"session_id": "a/b", "question": "hola"},
+        {"session_id": "..", "question": "hola"},
+        {"session_id": "-inicio", "question": "hola"},
         {"session_id": "x" * 65, "question": "hola"},
         {"session_id": "s1", "question": "x" * 2001},
     ],
@@ -219,3 +224,55 @@ def test_metrics_with_no_history(client):
 
     assert response.status_code == 200
     assert response.json()["questions"] == 0
+
+
+# --- production wiring (no stubs passed to create_app) -----------------------
+
+
+class WarmableService(StubService):
+    def __init__(self, warm_up_error: Exception | None = None) -> None:
+        super().__init__()
+        self.warm_up_error = warm_up_error
+        self.warmed = threading.Event()
+
+    def warm_up(self) -> None:
+        self.warmed.set()
+        if self.warm_up_error:
+            raise self.warm_up_error
+
+
+@pytest.mark.parametrize("warm_up_error", [None, RetrievalError("qdrant is still starting")])
+def test_app_builds_itself_from_settings_and_warms_up(
+    settings, history, monkeypatch, warm_up_error
+):
+    built = WarmableService(warm_up_error)
+    custom = settings.model_copy(update={"manual_search_minutes": 9})
+    monkeypatch.setattr(api_app, "get_settings", lambda: custom)
+    monkeypatch.setattr(api_app, "build_rag_service", lambda _: built)
+    monkeypatch.setattr(api_app, "build_history", lambda _: history)
+
+    with TestClient(create_app()) as client:
+        chat = client.post("/chat", json={"session_id": "s1", "question": "hola"})
+        metrics = client.get("/metrics")
+
+    assert built.warmed.wait(timeout=5)
+    assert chat.status_code == 200  # a failed warm-up does not take the API down
+    assert metrics.json()["manual_search_minutes"] == 9
+
+
+def test_api_entrypoint_runs_uvicorn_with_configured_host_and_port(settings, monkeypatch):
+    calls = []
+    custom = settings.model_copy(update={"api_host": "127.0.0.1", "api_port": 9000})
+    monkeypatch.setattr(api_main, "get_settings", lambda: custom)
+    monkeypatch.setattr(
+        api_main.uvicorn, "run", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+
+    api_main.main()
+
+    assert calls == [
+        (
+            ("rag_assistant.api.app:create_app",),
+            {"factory": True, "host": "127.0.0.1", "port": 9000, "log_level": "info"},
+        )
+    ]

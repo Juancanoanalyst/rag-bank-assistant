@@ -8,14 +8,15 @@ import streamlit as st
 from rag_assistant.config import get_settings
 from rag_assistant.ui.api_client import ApiClient, ApiError
 
-SESSION_ID_PATTERN = re.compile(r"^[\w.-]{1,64}$")
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][\w.-]{0,63}$")
 
 
 @st.cache_resource
 def get_client() -> ApiClient:
     settings = get_settings()
     # The API waits for the LLM, so allow a little more than the LLM timeout.
-    return ApiClient(settings.api_url, timeout=settings.llm_timeout_seconds + 30)
+    # /chat can make two LLM calls (condense, then answer) and wait for a model to load.
+    return ApiClient(settings.api_url, timeout=2 * settings.llm_timeout_seconds + 60)
 
 
 def new_session_id() -> str:
@@ -118,7 +119,6 @@ def analytics_tab(client: ApiClient) -> None:
     st.dataframe(
         [{"URL": item["url"], "Veces recuperada": item["count"]} for item in metrics["top_urls"]],
         hide_index=True,
-        use_container_width=True,
     )
 
     st.subheader("Mensajes por sesión")
@@ -132,7 +132,6 @@ def analytics_tab(client: ApiClient) -> None:
             for item in metrics["messages_per_session"]
         ],
         hide_index=True,
-        use_container_width=True,
     )
 
 
