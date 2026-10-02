@@ -54,8 +54,20 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
+      MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     # Downloads the model on the first start (about 2 GB); a no-op afterwards.
-    entrypoint: ["ollama", "pull", "${OLLAMA_MODEL:-qwen2.5:3b}"]
+    # Retried because a transient DNS or network error would otherwise abort
+    # the whole start-up; the download resumes where it stopped.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for attempt in 1 2 3 4 5; do
+          ollama pull "$$MODEL" && exit 0
+          echo "pull failed (attempt $$attempt of 5), retrying in 10 s"
+          sleep 10
+        done
+        exit 1
     restart: "no"
 
   ingest:
