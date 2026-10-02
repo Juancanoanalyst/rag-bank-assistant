@@ -75,6 +75,67 @@ def chat_tab(client: ApiClient, session_id: str) -> None:
     )
 
 
+def _seconds(milliseconds: float | None) -> str:
+    return f"{milliseconds / 1000:.1f} s" if milliseconds is not None else "—"
+
+
+def analytics_tab(client: ApiClient) -> None:
+    try:
+        metrics = client.metrics()
+    except ApiError as exc:
+        st.error(str(exc))
+        return
+
+    if not metrics["questions"]:
+        st.info("Aún no hay conversaciones registradas.")
+        return
+
+    st.subheader("Uso")
+    sessions, questions, per_session = st.columns(3)
+    sessions.metric("Sesiones", metrics["sessions"])
+    questions.metric("Preguntas", metrics["questions"])
+    per_session.metric("Mensajes por sesión", f"{metrics['avg_messages_per_session']:.1f}")
+
+    st.subheader("Calidad y rendimiento")
+    p50, p95, no_answer, score = st.columns(4)
+    p50.metric("Latencia p50", _seconds(metrics["latency_p50_ms"]))
+    p95.metric("Latencia p95", _seconds(metrics["latency_p95_ms"]))
+    no_answer.metric("Sin respuesta", f"{metrics['no_answer_rate']:.0%}")
+    top_score = metrics["avg_top_rerank_score"]
+    score.metric("Puntaje reranker", f"{top_score:.2f}" if top_score is not None else "—")
+
+    st.subheader("Impacto")
+    st.metric(
+        "Horas ahorradas (estimado)",
+        f"{metrics['estimated_hours_saved']:.1f} h",
+        help=(
+            f"{metrics['answered']} preguntas respondidas × "
+            f"{metrics['manual_search_minutes']:g} minutos de búsqueda manual cada una."
+        ),
+    )
+
+    st.subheader("Páginas más consultadas")
+    st.dataframe(
+        [{"URL": item["url"], "Veces recuperada": item["count"]} for item in metrics["top_urls"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.subheader("Mensajes por sesión")
+    st.dataframe(
+        [
+            {
+                "Sesión": item["session_id"],
+                "Mensajes": item["messages"],
+                "Preguntas": item["questions"],
+            }
+            for item in metrics["messages_per_session"]
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Asistente BBVA Colombia", page_icon="💬")
     st.title("Asistente del sitio web BBVA Colombia")
@@ -97,7 +158,7 @@ def main() -> None:
         st.caption("El historial se guarda por ID de sesión.")
 
     session_id = st.session_state.session_id.strip()
-    (chat,) = st.tabs(["Chat"])
+    chat, analytics = st.tabs(["Chat", "Analítica"])
     with chat:
         if SESSION_ID_PATTERN.match(session_id):
             chat_tab(get_client(), session_id)
@@ -106,6 +167,8 @@ def main() -> None:
                 "El ID de sesión solo admite letras, números, guiones, puntos y guion bajo "
                 "(máximo 64 caracteres)."
             )
+    with analytics:
+        analytics_tab(get_client())
 
 
 main()

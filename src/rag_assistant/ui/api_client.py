@@ -22,6 +22,9 @@ class ApiClient:
     def history(self, session_id: str) -> list[dict]:
         return self._request("GET", f"/sessions/{session_id}/history")["messages"]
 
+    def metrics(self) -> dict:
+        return self._request("GET", "/metrics")
+
     def _request(self, method: str, path: str, **kwargs) -> dict:
         try:
             response = self._session.request(
