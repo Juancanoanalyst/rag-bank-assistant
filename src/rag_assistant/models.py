@@ -1,6 +1,47 @@
 """Data shapes passed between pipeline stages."""
 
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel
+
+
+class ChatMessage(BaseModel):
+    """One turn sent to an LLM."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class StoredMessage(BaseModel):
+    """A row of the conversation history.
+
+    The metric fields are only set on assistant messages: they describe how
+    that answer was produced.
+    """
+
+    session_id: str
+    role: Literal["user", "assistant"]
+    content: str
+    timestamp: datetime
+    latency_ms: float | None = None
+    retrieved_urls: list[str] = []
+    rerank_scores: list[float] = []
+    # False when the assistant replied "no answer found"; None on user messages.
+    answered: bool | None = None
+
+
+class ChatResult(BaseModel):
+    """What RAGService returns for one question."""
+
+    session_id: str
+    answer: str
+    answered: bool
+    sources: list[str]
+    rerank_scores: list[float]
+    # The question as rewritten for retrieval using the conversation so far.
+    standalone_question: str
+    latency_ms: float
 
 
 class RawPage(BaseModel):

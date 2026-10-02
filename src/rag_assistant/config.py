@@ -58,15 +58,21 @@ class Settings(BaseSettings):
     # --- Retrieval ---
     top_k: int = Field(default=20, gt=0)
     rerank_top_n: int = Field(default=5, gt=0)
+    # Below this best rerank score (0-1) the question is treated as "no answer found"
+    # and the LLM is not called. Off-topic questions score under 0.1 on the real corpus.
+    min_rerank_score: float = Field(default=0.15, ge=0, le=1)
 
     # --- LLM ---
     llm_provider: Literal["ollama", "groq"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
+    # Context window requested from Ollama; its default is small and truncates silently.
+    ollama_num_ctx: int = Field(default=8192, gt=0)
     groq_api_key: SecretStr | None = None
     groq_model: str = "llama-3.1-8b-instant"
     llm_temperature: float = Field(default=0.1, ge=0, le=2)
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
+    llm_max_tokens: int = Field(default=512, gt=0)
 
     # --- Conversation history ---
     history_db_path: Path = Path("data/history/history.db")

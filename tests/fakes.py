@@ -3,8 +3,32 @@
 import hashlib
 
 from rag_assistant.embeddings import Embedder
-from rag_assistant.models import RetrievedChunk
+from rag_assistant.exceptions import LLMError
+from rag_assistant.llm import LLMClient
+from rag_assistant.models import ChatMessage, RetrievedChunk
 from rag_assistant.reranking import Reranker
+
+
+class FakeLLM(LLMClient):
+    """Returns scripted replies in order and records every prompt it receives.
+
+    A reply that is an exception instance is raised instead of returned.
+    """
+
+    def __init__(self, *replies: str | Exception) -> None:
+        self._replies = list(replies)
+        self.calls: list[list[ChatMessage]] = []
+        self.max_tokens: list[int | None] = []
+
+    def generate(self, messages: list[ChatMessage], max_tokens: int | None = None) -> str:
+        self.calls.append(messages)
+        self.max_tokens.append(max_tokens)
+        if not self._replies:
+            raise LLMError("FakeLLM has no scripted reply left")
+        reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 class FakeReranker(Reranker):
