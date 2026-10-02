@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     scraper_delay_seconds: float = Field(default=1.0, ge=0)
     scraper_timeout_seconds: float = Field(default=15.0, gt=0)
     scraper_user_agent: str = "rag-bank-assistant/0.1 (prueba tecnica; uso educativo)"
+    # Pages with less extracted text than this are dropped (menus, redirects, JS shells).
+    scraper_min_text_chars: int = Field(default=200, ge=0)
     raw_data_dir: Path = Path("data/raw")
     clean_data_dir: Path = Path("data/clean")
 
