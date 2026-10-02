@@ -10,6 +10,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY .streamlit ./.streamlit
 RUN pip install .
 
 # Run as an unprivileged user. /app/data is created here so the named volume
