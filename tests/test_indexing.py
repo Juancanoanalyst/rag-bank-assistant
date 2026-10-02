@@ -109,7 +109,7 @@ def test_index_without_documents_fails_and_keeps_existing_collection(store, docu
     indexer = make_indexer(store)
     first = indexer.index(documents)
 
-    with pytest.raises(IndexingError, match="no documents"):
+    with pytest.raises(IndexingError, match="no text"):
         indexer.index([])
 
     assert store.count() == first.chunks
@@ -185,3 +185,32 @@ def test_cli_fails_cleanly_without_clean_documents(settings, monkeypatch, store)
     monkeypatch.setattr(cli, "build_indexer", lambda _: make_indexer(store))
 
     assert cli.main([]) == 1
+
+
+def test_failed_write_drops_the_half_built_collection(store, documents, monkeypatch):
+    indexer = make_indexer(store, batch_size=2)
+    real_upsert = store.upsert
+    calls = []
+
+    def failing_upsert(chunks, vectors):
+        calls.append(len(chunks))
+        if len(calls) == 2:
+            raise IndexingError("Could not write 2 chunks: timeout")
+        real_upsert(chunks, vectors)
+
+    monkeypatch.setattr(store, "upsert", failing_upsert)
+
+    with pytest.raises(IndexingError, match="timeout"):
+        indexer.index(documents)
+
+    assert store.count() == 0
+    assert not make_indexer(store).index(documents, skip_if_indexed=True).skipped
+
+
+def test_skip_if_indexed_reindexes_when_the_embedding_size_changed(store, documents):
+    make_indexer(store, FakeEmbedder(dimension=16)).index(documents)
+
+    report = make_indexer(store, FakeEmbedder(dimension=8)).index(documents, skip_if_indexed=True)
+
+    assert not report.skipped
+    assert store.vector_size() == 8
